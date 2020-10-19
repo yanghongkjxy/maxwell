@@ -37,10 +37,12 @@ public class MaxwellMysqlConfig {
 		this.jdbcOptions = new HashMap<>();
 		this.jdbcOptions.put("zeroDateTimeBehavior", "convertToNull");
 		this.jdbcOptions.put("connectTimeout", String.valueOf(connectTimeoutMS));
+		this.jdbcOptions.put("allowPublicKeyRetrieval", "true");
 	}
 
 	public MaxwellMysqlConfig(String host, Integer port, String database, String user, String password,
 			SSLMode sslMode) {
+		this();
 		this.host = host;
 		this.port = port;
 		this.database = database;
@@ -50,6 +52,7 @@ public class MaxwellMysqlConfig {
 	}
 
 	public MaxwellMysqlConfig(MaxwellMysqlConfig c) {
+		this();
 		this.host = c.host;
 		this.port = c.port;
 		this.database = c.database;

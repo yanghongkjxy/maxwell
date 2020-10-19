@@ -1,9 +1,10 @@
 package com.zendesk.maxwell.bootstrap;
 
+import com.zendesk.maxwell.util.C3P0ConnectionPool;
 import com.zendesk.maxwell.util.Logging;
+import com.zendesk.maxwell.util.ConnectionPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import snaq.db.ConnectionPool;
 
 import java.io.Console;
 import java.sql.Connection;
@@ -34,7 +35,9 @@ public class MaxwellBootstrapUtility {
 		}
 
 		ConnectionPool connectionPool = getConnectionPool(config);
-		try ( final Connection connection = connectionPool.getConnection() ) {
+		ConnectionPool replConnectionPool = getReplicationConnectionPool(config);
+		try ( final Connection connection = connectionPool.getConnection();
+				final Connection replicationConnection = replConnectionPool.getConnection() ) {
 			if ( config.abortBootstrapID != null ) {
 				getInsertedRowsCount(connection, config.abortBootstrapID);
 				removeBootstrapRow(connection, config.abortBootstrapID);
@@ -46,8 +49,8 @@ public class MaxwellBootstrapUtility {
 				getInsertedRowsCount(connection, config.monitorBootstrapID);
 				rowId = config.monitorBootstrapID;
 			} else {
-				Long totalRows = calculateRowCount(connection, config.databaseName, config.tableName, config.whereClause);
-				rowId = insertBootstrapStartRow(connection, config.databaseName, config.tableName, config.whereClause, config.clientID, totalRows);
+				Long totalRows = calculateRowCount(replicationConnection, config.databaseName, config.tableName, config.whereClause);
+				rowId = insertBootstrapStartRow(connection, config.databaseName, config.tableName, config.whereClause, config.clientID, config.comment, totalRows);
 			}
 
 			try {
@@ -130,13 +133,18 @@ public class MaxwellBootstrapUtility {
 		}
 	}
 
-	private ConnectionPool getConnectionPool(MaxwellBootstrapUtilityConfig config) {
-		String name = "MaxwellBootstrapConnectionPool";
-		int maxPool = 10;
-		int maxSize = 0;
-		int idleTimeout = 10;
+	private ConnectionPool getConnectionPool(MaxwellBootstrapUtilityConfig config) throws SQLException {
 		String connectionURI = config.getConnectionURI();
-		return new ConnectionPool(name, maxPool, maxSize, idleTimeout, connectionURI, config.mysql.user, config.mysql.password);
+		System.out.println("connecting to " + connectionURI);
+		return new C3P0ConnectionPool(connectionURI, config.mysql.user, config.mysql.password);
+	}
+
+	private ConnectionPool getReplicationConnectionPool(MaxwellBootstrapUtilityConfig config) throws SQLException {
+		String connectionURI = config.getReplicationConnectionURI();
+		System.out.println("connecting to " + connectionURI);
+		System.out.println("user: " + config.replicationMysql.user + ", passwd: '" + config.replicationMysql.password + "'");
+
+		return new C3P0ConnectionPool(connectionURI, config.replicationMysql.user, config.replicationMysql.password);
 	}
 
 	private Long getTotalRowCount(Connection connection, Long bootstrapRowID) throws SQLException, MissingBootstrapRowException {
@@ -161,9 +169,9 @@ public class MaxwellBootstrapUtility {
 		return resultSet.getLong(1);
 	}
 
-	private long insertBootstrapStartRow(Connection connection, String db, String table, String whereClause, String clientID,Long totalRows) throws SQLException {
+	private long insertBootstrapStartRow(Connection connection, String db, String table, String whereClause, String clientID, String comment, Long totalRows) throws SQLException {
 		LOGGER.info("inserting bootstrap start row");
-		String sql = "insert into `bootstrap` (database_name, table_name, where_clause, total_rows, client_id) values(?, ?, ?, ?, ?)";
+		String sql = "insert into `bootstrap` (database_name, table_name, where_clause, total_rows, client_id, comment) values(?, ?, ?, ?, ?, ?)";
 
 		PreparedStatement preparedStatement = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
 		preparedStatement.setString(1, db);
@@ -172,6 +180,7 @@ public class MaxwellBootstrapUtility {
 		preparedStatement.setString(3, whereClause);
 		preparedStatement.setLong(4, totalRows);
 		preparedStatement.setString(5, clientID);
+		preparedStatement.setString(6, comment);
 
 		preparedStatement.execute();
 		ResultSet generatedKeys = preparedStatement.getGeneratedKeys();

@@ -12,9 +12,9 @@ import com.zendesk.maxwell.replication.Position;
 import com.zendesk.maxwell.replication.Replicator;
 import com.zendesk.maxwell.row.HeartbeatRowMap;
 import com.zendesk.maxwell.row.RowMap;
+import com.zendesk.maxwell.util.ConnectionPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import snaq.db.ConnectionPool;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -30,6 +30,7 @@ public class Recovery {
 	private final MaxwellMysqlConfig replicationConfig;
 	private final String maxwellDatabaseName;
 	private final RecoverySchemaStore schemaStore;
+
 
 	public Recovery(MaxwellMysqlConfig replicationConfig,
 					String maxwellDatabaseName,
@@ -72,7 +73,8 @@ public class Recovery {
 					new HeartbeatNotifier(),
 					null,
 					new RecoveryFilter(this.maxwellDatabaseName),
-					new MaxwellOutputConfig()
+					new MaxwellOutputConfig(),
+					0.25f // Default memory usage size, not used 
 			);
 
 			HeartbeatRowMap h = findHeartbeat(replicator);

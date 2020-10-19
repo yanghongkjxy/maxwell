@@ -15,6 +15,15 @@ public abstract class AbstractConfig {
 	static final protected String DEFAULT_CONFIG_FILE = "config.properties";
 	protected abstract OptionParser buildOptionParser();
 
+	protected void usage(String banner, MaxwellOptionParser optionParser, String section) {
+		System.err.println(banner);
+		System.err.println();
+		try {
+			optionParser.printHelpOn(System.err, section);
+			System.exit(1);
+		} catch (IOException e) { }
+	}
+
 	protected void usage(String string) {
 		System.err.println(string);
 		System.err.println();
@@ -121,6 +130,21 @@ public abstract class AbstractConfig {
 			return null; // unreached
 		}
 	}
+
+	protected Integer fetchIntegerOption(String name, OptionSet options, Properties properties, Integer defaultVal) {
+		String strOption = fetchOption(name, options, properties, null);
+		if ( strOption == null )
+			return defaultVal;
+		else {
+			try {
+				return Integer.valueOf(strOption);
+			} catch ( NumberFormatException e ) {
+				usageForOptions("Invalid value for " + name + ", integer required", "--" + name);
+			}
+			return null; // unreached
+		}
+	}
+
 
 
 	protected MaxwellMysqlConfig parseMysqlConfig(String prefix, OptionSet options, Properties properties) {

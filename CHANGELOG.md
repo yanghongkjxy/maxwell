@@ -1,5 +1,174 @@
 # Maxwell changelog
 
+### [v1.27.1](https://github.com/zendesk/maxwell/releases/tag/v1.27.1): "red bag?  red bag"
+
+
+- redis producer gets sentinal support
+- fix a double-reconnect race condition
+- file producer honors javascript row-suppression
+- better error messaging when we lack REPLICATION SLAVE privs
+- miscellaneous dependency bumps
+
+
+### [v1.27.0](https://github.com/zendesk/maxwell/releases/tag/v1.27.0): "running water"
+
+
+- better support for empty/null passwords
+- allow bootstrap utility to query replication_host
+- a few library upgrades, notably pubsub and kinesis library
+- bootstrap connection uses jdbc_options properly
+- add logging for when we hit out of sync schema exceptions
+- allow for partitioning by thread_id, thx @gogov
+- fresh and clean documentation
+
+
+### [v1.26.4](https://github.com/zendesk/maxwell/releases/tag/v1.26.4): "No songs here"
+
+ - support now() function with precision
+
+
+### [v1.26.3](https://github.com/zendesk/maxwell/releases/tag/v1.26.3): "the worst song in the goddamn world"
+
+
+- use pooled redis connections, fixes corruption when redis was accessed
+from multiple threads (bootstrap/producer), thanks @lucastex
+- fix date handling of '0000-01-01'
+- fix race condition in binlog reconnect logic
+
+
+### [v1.26.2](https://github.com/zendesk/maxwell/releases/tag/v1.26.2): "dave the butcher"
+
+
+- bootstraps can be scheduled in the future by setting the `started_at`
+  column, thanks @lucastex
+- two mysql 8 fixes; one for a `DEFAULT(function())` parse error, one
+  for supporting DEFAULT ENCRYPTION
+
+
+### [v1.26.1](https://github.com/zendesk/maxwell/releases/tag/v1.26.1): "maybe we can break your ankle / clean and unsuspiciously"
+
+
+- fixes for redis re-connection login, thanks much @lucastex
+
+
+### [v1.26.0](https://github.com/zendesk/maxwell/releases/tag/v1.26.0): "tip the waitress, feed her cocaine habit"
+
+
+- We now support mysql 8's caching_sha2_password authentication scheme
+- support for converting JSON field names to camelCase
+
+
+### [v1.25.3](https://github.com/zendesk/maxwell/releases/tag/v1.25.3): "bye, bolinas"
+
+
+- fixes memory leak in mysql-binlog-connector
+- fixes exceptions that occur when a connection passes wait_timeout
+
+
+### [v1.25.2](https://github.com/zendesk/maxwell/releases/tag/v1.25.2): "love potion #9"
+
+
+- Fixes for a long standing JSON bug in 8.0.19+
+
+
+### [v1.25.1](https://github.com/zendesk/maxwell/releases/tag/v1.25.1): "nowhere to put it"
+
+
+- issue #1457, ALTER DATABASE with implicit database name
+- maxwell now runs on JDK 11 in docker
+- exit with status 2 when we can't find binlog files
+
+
+### [v1.25.0](https://github.com/zendesk/maxwell/releases/tag/v1.25.0): "mah mah mah my corona.  I'm sorry.  I'm sorry."
+
+
+- swap un-maintained snaq.db with C3P0.
+- support eu datadog metrics
+- protect against lost connections during key queries (bootstrapping,
+      heartbeats, postition setting)
+
+
+### [v1.24.2](https://github.com/zendesk/maxwell/releases/tag/v1.24.2): "#shelterinstyle"
+
+
+- bugfix parsing errors: compressed columns, exchange partitions,
+  parenthesis-enclosed default values, `drop column foo.t`.
+- add partition-by-random feature.
+- update jackson-databind to get security patch
+- fix redis channel interpolation on RPUSH
+
+
+### [v1.24.1](https://github.com/zendesk/maxwell/releases/tag/v1.24.1): "pixies in my head all damn week"
+
+
+- allow jdbc_options on secondary connections
+- fix a crash in bootstrapping / javascript filters
+- fix a regression in message.publish.age metric
+
+
+### [v1.24.0](https://github.com/zendesk/maxwell/releases/tag/v1.24.0): "la la la la la la low"
+
+
+ - add comments field to bootstrapping, thanks Tom Collins
+ - fix sql bug with #comments style comments
+
+
+### [v1.23.5](https://github.com/zendesk/maxwell/releases/tag/v1.23.5): "And I get so stuck in my head - Lost in all the lies, nihilistic backslide"
+
+
+ - Update bootstrap documentation
+ - Bump drop wizard metrics to support Java versions 10+
+
+
+### [v1.23.4](https://github.com/zendesk/maxwell/releases/tag/v1.23.4): "Try to be kinder to people who bore you, You're probably boring them too."
+
+
+- Bump and override dependencies to fix security vulnerabilities.
+- Update redis-key config options
+
+ - list changes
+
+
+### [v1.23.3](https://github.com/zendesk/maxwell/releases/tag/v1.23.3): "but that's not the way it feels"
+
+
+- pubsubDelayMultiplier may now be 1.0
+- allow %{database} and %{topic} interpolation into redis producer
+- docs updates
+- setup default client_id in maxwell-bootstrap util
+
+
+### [v1.23.2](https://github.com/zendesk/maxwell/releases/tag/v1.23.2): "you enjoy it every time"
+
+
+- upgrade jackson
+- stop passing maxwell rows through the JS filter.  too dangerous.
+
+
+### [v1.23.1](https://github.com/zendesk/maxwell/releases/tag/v1.23.1): "the new barrista"
+
+
+- Add option for XADD (redis streams) operation
+- Add configuration flag for tuning transaction buffer memory
+- sectionalize help text
+
+
+### [v1.23.0](https://github.com/zendesk/maxwell/releases/tag/v1.23.0): "When it breaks If it breaks We will see"
+
+
+- Added AWS FIFO support
+- Add retry and batch settings to pubs producer
+- Add support for age SLO metrics
+
+
+### [v1.22.6](https://github.com/zendesk/maxwell/releases/tag/v1.22.6): "the things that keep your, like, dresses, like"
+
+
+- upgrade mysql-connector-java to 8.0.17
+- use a newer docker image as base
+ - list changes
+
+
 ### [v1.22.5](https://github.com/zendesk/maxwell/releases/tag/v1.22.5): "all of the names"
 
 

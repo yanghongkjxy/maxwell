@@ -1,6 +1,7 @@
 package com.zendesk.maxwell;
 
 import com.djdch.log4j.StaticShutdownCallbackRegistry;
+import com.github.shyiko.mysql.binlog.network.ServerException;
 import com.zendesk.maxwell.bootstrap.BootstrapController;
 import com.zendesk.maxwell.producer.AbstractProducer;
 import com.zendesk.maxwell.recovery.Recovery;
@@ -9,9 +10,8 @@ import com.zendesk.maxwell.replication.BinlogConnectorReplicator;
 import com.zendesk.maxwell.replication.Position;
 import com.zendesk.maxwell.replication.Replicator;
 import com.zendesk.maxwell.row.HeartbeatRowMap;
-import com.zendesk.maxwell.schema.MysqlPositionStore;
-import com.zendesk.maxwell.schema.MysqlSchemaStore;
-import com.zendesk.maxwell.schema.SchemaStoreSchema;
+import com.zendesk.maxwell.schema.*;
+import com.zendesk.maxwell.schema.columndef.ColumnDefCastException;
 import com.zendesk.maxwell.util.Logging;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +19,8 @@ import org.slf4j.LoggerFactory;
 import java.net.URISyntaxException;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 
 public class Maxwell implements Runnable {
 	protected MaxwellConfig config;
@@ -34,7 +36,6 @@ public class Maxwell implements Runnable {
 	protected Maxwell(MaxwellContext context) throws SQLException, URISyntaxException {
 		this.config = context.getConfig();
 		this.context = context;
-		this.context.probeConnections();
 	}
 
 	public void run() {
@@ -93,6 +94,24 @@ public class Maxwell implements Runnable {
 			}
 		}
 		return null;
+	}
+
+	private void logColumnCastError(ColumnDefCastException e) throws SQLException, SchemaStoreException {
+		try ( Connection conn = context.getSchemaConnectionPool().getConnection() ) {
+			LOGGER.error("checking for schema inconsistencies in " + e.database + "." + e.table);
+			SchemaCapturer capturer = new SchemaCapturer(conn, context.getCaseSensitivity(), e.database, e.table);
+			Schema recaptured = capturer.capture();
+			Table t = this.replicator.getSchema().findDatabase(e.database).findTable(e.table);
+			List<String> diffs = new ArrayList<>();
+
+			t.diff(diffs, recaptured.findDatabase(e.database).findTable(e.table), "old", "new");
+			if ( diffs.size() == 0 ) {
+				LOGGER.error("no differences found");
+			} else {
+				for ( String diff : diffs )
+					LOGGER.error(diff);
+			}
+		}
 	}
 
 	protected Position getInitialPosition() throws Exception {
@@ -192,6 +211,8 @@ public class Maxwell implements Runnable {
 		MysqlSchemaStore mysqlSchemaStore = new MysqlSchemaStore(this.context, initPosition);
 		BootstrapController bootstrapController = this.context.getBootstrapController(mysqlSchemaStore.getSchemaID());
 
+		this.context.startSchemaCompactor();
+
 		if (config.recaptureSchema) {
 			mysqlSchemaStore.captureAndSaveSchema();
 		}
@@ -212,15 +233,23 @@ public class Maxwell implements Runnable {
 			context.getHeartbeatNotifier(),
 			config.scripting,
 			context.getFilter(),
-			config.outputConfig
+			config.outputConfig,
+			config.bufferMemoryUsage
 		);
 
 		context.setReplicator(replicator);
 		this.context.start();
+
+		replicator.startReplicator();
 		this.onReplicatorStart();
 
-		replicator.runLoop();
+		try {
+			replicator.runLoop();
+		} catch ( ColumnDefCastException e ) {
+			logColumnCastError(e);
+		}
 	}
+
 
 	public static void main(String[] args) {
 		try {
@@ -250,6 +279,9 @@ public class Maxwell implements Runnable {
 			LOGGER.error("Syntax issue with URI, check for misconfigured host, port, database, or JDBC options (see RFC 2396)");
 			LOGGER.error("URISyntaxException: " + e.getLocalizedMessage());
 			System.exit(1);
+		} catch ( ServerException e ) {
+			LOGGER.error("Maxwell couldn't find the requested binlog, exiting...");
+			System.exit(2);
 		} catch ( Exception e ) {
 			e.printStackTrace();
 			System.exit(1);

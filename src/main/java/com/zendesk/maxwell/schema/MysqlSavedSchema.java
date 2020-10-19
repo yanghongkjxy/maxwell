@@ -6,7 +6,6 @@ import java.util.*;
 import java.io.IOException;
 
 import com.github.shyiko.mysql.binlog.GtidSet;
-import com.mysql.jdbc.exceptions.jdbc4.MySQLIntegrityConstraintViolationException;
 
 import com.fasterxml.jackson.databind.JavaType;
 import com.zendesk.maxwell.CaseSensitivity;
@@ -14,6 +13,7 @@ import com.zendesk.maxwell.MaxwellContext;
 import com.zendesk.maxwell.replication.Position;
 import com.zendesk.maxwell.schema.columndef.*;
 
+import com.zendesk.maxwell.util.ConnectionPool;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.text.StrTokenizer;
@@ -27,8 +27,6 @@ import com.zendesk.maxwell.schema.ddl.ResolvedSchemaChange;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import snaq.db.ConnectionPool;
-
 
 public class MysqlSavedSchema {
 	static int SchemaStoreVersion = 4;
@@ -54,7 +52,7 @@ public class MysqlSavedSchema {
 
 	private boolean shouldSnapshotNextSchema = false;
 
-	private MysqlSavedSchema(Long serverID, CaseSensitivity sensitivity) throws SQLException {
+	public MysqlSavedSchema(Long serverID, CaseSensitivity sensitivity) throws SQLException {
 		this.serverID = serverID;
 		this.sensitivity = sensitivity;
 	}
@@ -117,7 +115,7 @@ public class MysqlSavedSchema {
 			connection.setAutoCommit(false);
 			this.schemaID = saveSchema(connection);
 			connection.commit();
-		} catch ( MySQLIntegrityConstraintViolationException e ) {
+		} catch ( SQLIntegrityConstraintViolationException e ) {
 			connection.rollback();
 
 			connection.setAutoCommit(true);
@@ -177,15 +175,26 @@ public class MysqlSavedSchema {
 	}
 
 	public Long saveSchema(Connection conn) throws SQLException {
-		if ( this.baseSchemaID != null )
+		if (this.baseSchemaID != null)
 			return saveDerivedSchema(conn);
 
-		PreparedStatement schemaInsert, databaseInsert, tableInsert;
+		PreparedStatement schemaInsert;
 
 		schemaInsert = conn.prepareStatement(
 				"INSERT INTO `schemas` SET binlog_file = ?, binlog_position = ?, server_id = ?, charset = ?, version = ?, position_sha = ?, gtid_set = ?, last_heartbeat_read = ?",
 				Statement.RETURN_GENERATED_KEYS
 		);
+
+		BinlogPosition binlogPosition = position.getBinlogPosition();
+		Long schemaId = executeInsert(schemaInsert, binlogPosition.getFile(),
+				binlogPosition.getOffset(), serverID, schema.getCharset(), SchemaStoreVersion,
+				getPositionSHA(), binlogPosition.getGtidSetStr(), position.getLastHeartbeatRead());
+		saveFullSchema(conn, schemaId);
+		return schemaId;
+	}
+
+	public void saveFullSchema(Connection conn, Long schemaId) throws SQLException {
+		PreparedStatement databaseInsert, tableInsert;
 
 		databaseInsert = conn.prepareStatement(
 				"INSERT INTO `databases` SET schema_id = ?, name = ?, charset=?",
@@ -197,10 +206,6 @@ public class MysqlSavedSchema {
 				Statement.RETURN_GENERATED_KEYS
 		);
 
-		BinlogPosition binlogPosition = position.getBinlogPosition();
-		Long schemaId = executeInsert(schemaInsert, binlogPosition.getFile(),
-				binlogPosition.getOffset(), serverID, schema.getCharset(), SchemaStoreVersion,
-				getPositionSHA(), binlogPosition.getGtidSetStr(), position.getLastHeartbeatRead());
 
 		ArrayList<Object> columnData = new ArrayList<Object>();
 
@@ -262,8 +267,6 @@ public class MysqlSavedSchema {
 		}
 		if ( columnData.size() > 0 )
 			executeColumnInsert(conn, columnData);
-
-		return schemaId;
 	}
 
 	private void executeColumnInsert(Connection conn, ArrayList<Object> columnData) throws SQLException {
@@ -308,15 +311,12 @@ public class MysqlSavedSchema {
 		}
 	}
 
-	public static MysqlSavedSchema restoreFromSchemaID(MysqlSavedSchema savedSchema, MaxwellContext context) throws SQLException, InvalidSchemaError {
-		try ( Connection conn = context.getMaxwellConnectionPool().getConnection() ) {
-			Long schemaID = savedSchema.getSchemaID();
-			if (schemaID == null)
-				return null;
-
-			savedSchema.restoreFromSchemaID(conn, schemaID);
-			return savedSchema;
-		}
+	public static MysqlSavedSchema restoreFromSchemaID(
+			Long schemaID, Connection conn, CaseSensitivity sensitivity
+	) throws SQLException, InvalidSchemaError {
+		MysqlSavedSchema savedSchema = new MysqlSavedSchema(schemaID, sensitivity);
+		savedSchema.restoreFromSchemaID(conn, schemaID);
+		return savedSchema;
 	}
 
 	private List<ResolvedSchemaChange> parseDeltas(String json) {
@@ -761,4 +761,9 @@ public class MysqlSavedSchema {
 		);
 		return DigestUtils.shaHex(shaString);
 	}
+
+	public Long getBaseSchemaID() {
+		return baseSchemaID;
+	}
+
 }

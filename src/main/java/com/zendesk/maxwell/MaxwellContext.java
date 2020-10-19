@@ -9,13 +9,16 @@ import com.zendesk.maxwell.recovery.RecoveryInfo;
 import com.zendesk.maxwell.replication.*;
 import com.zendesk.maxwell.row.RowMap;
 import com.zendesk.maxwell.schema.MysqlPositionStore;
+import com.zendesk.maxwell.schema.MysqlSchemaCompactor;
 import com.zendesk.maxwell.schema.PositionStoreThread;
 import com.zendesk.maxwell.schema.ReadOnlyMysqlPositionStore;
+import com.zendesk.maxwell.util.C3P0ConnectionPool;
+import com.zendesk.maxwell.util.RunLoopProcess;
 import com.zendesk.maxwell.util.StoppableTask;
 import com.zendesk.maxwell.util.TaskManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import snaq.db.ConnectionPool;
+import com.zendesk.maxwell.util.ConnectionPool;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
@@ -51,7 +54,9 @@ public class MaxwellContext {
 
 	private final HeartbeatNotifier heartbeatNotifier;
 	private final MaxwellDiagnosticContext diagnosticContext;
+
 	private BootstrapController bootstrapController;
+	private Thread bootstrapControllerThread;
 
 	public MaxwellContext(MaxwellConfig config) throws SQLException, URISyntaxException {
 		this.config = config;
@@ -59,29 +64,38 @@ public class MaxwellContext {
 		this.taskManager = new TaskManager();
 		this.metrics = new MaxwellMetrics(config);
 
-		this.replicationConnectionPool = new ConnectionPool("ReplicationConnectionPool", 10, 0, 10,
-				config.replicationMysql.getConnectionURI(false), config.replicationMysql.user, config.replicationMysql.password);
-		this.replicationConnectionPool.setCaching(false);
+		this.replicationConnectionPool = new C3P0ConnectionPool(
+			config.replicationMysql.getConnectionURI(false),
+			config.replicationMysql.user,
+			config.replicationMysql.password
+		);
+
+		this.replicationConnectionPool.probe();
 
 		if (config.schemaMysql.host == null) {
 			this.schemaConnectionPool = null;
 		} else {
-			this.schemaConnectionPool = new ConnectionPool(
-					"SchemaConnectionPool",
-					10,
-					0,
-					10,
-					config.schemaMysql.getConnectionURI(false),
-					config.schemaMysql.user,
-					config.schemaMysql.password);
+			this.schemaConnectionPool = new C3P0ConnectionPool(
+				config.schemaMysql.getConnectionURI(false),
+				config.schemaMysql.user,
+				config.schemaMysql.password
+			);
+			this.schemaConnectionPool.probe();
 		}
 
-		this.rawMaxwellConnectionPool = new ConnectionPool("RawMaxwellConnectionPool", 1, 2, 100,
-			config.maxwellMysql.getConnectionURI(false), config.maxwellMysql.user, config.maxwellMysql.password);
+		this.rawMaxwellConnectionPool = new C3P0ConnectionPool(
+			config.maxwellMysql.getConnectionURI(false),
+			config.maxwellMysql.user,
+			config.maxwellMysql.password
+		);
+		this.rawMaxwellConnectionPool.probe();
 
-		this.maxwellConnectionPool = new ConnectionPool("MaxwellConnectionPool", 10, 0, 10,
-					config.maxwellMysql.getConnectionURI(), config.maxwellMysql.user, config.maxwellMysql.password);
-		this.maxwellConnectionPool.setCaching(false);
+		this.maxwellConnectionPool = new C3P0ConnectionPool(
+			config.maxwellMysql.getConnectionURI(),
+			config.maxwellMysql.user,
+			config.maxwellMysql.password
+		);
+		// do NOT probe the regular maxwell connection pool; the database might not be created yet.
 
 		if ( this.config.initPosition != null )
 			this.initialPosition = this.config.initPosition;
@@ -226,6 +240,25 @@ public class MaxwellContext {
 		return this.terminationThread;
 	}
 
+	public Thread startTask(RunLoopProcess task, String name) {
+		Thread t = new Thread(() -> {
+			try {
+				task.runLoop();
+			} catch (Exception e) {
+				LOGGER.error("exception in thread: " + name, e);
+				try {
+					this.terminate(e);
+				} catch (Exception exception) {
+					exception.printStackTrace();
+				}
+			}
+		}, name);
+
+		t.start();
+		addTask(task);
+		return t;
+	}
+
 	public Exception getError() {
 		return error;
 	}
@@ -262,6 +295,9 @@ public class MaxwellContext {
 	}
 
 	public void setPosition(Position position) {
+		if ( position == null )
+			return;
+
 		this.getPositionStoreThread().setPosition(position);
 	}
 
@@ -345,7 +381,7 @@ public class MaxwellContext {
 				this.producer = new RabbitmqProducer(this);
 				break;
 			case "redis":
-				this.producer = new MaxwellRedisProducer(this, this.config.redisPubChannel, this.config.redisListKey, this.config.redisType);
+				this.producer = new MaxwellRedisProducer(this);
 				break;
 			case "none":
 				this.producer = new NoneProducer(this);
@@ -369,6 +405,12 @@ public class MaxwellContext {
 		return this.producer;
 	}
 
+	public void runBootstrapNow() {
+		if ( this.bootstrapControllerThread != null ) {
+			this.bootstrapControllerThread.interrupt();
+		}
+	}
+
 	public synchronized BootstrapController getBootstrapController(Long currentSchemaID) throws IOException {
 		if ( this.bootstrapController != null ) {
 			return this.bootstrapController;
@@ -387,16 +429,24 @@ public class MaxwellContext {
 			currentSchemaID
 		);
 
-		new Thread(() -> {
-			try {
-				this.bootstrapController.runLoop();
-			} catch (Exception e) {
-				e.printStackTrace();
-			}
-		}, "maxwell-bootstrap-controller").start();
+		this.bootstrapControllerThread = this.startTask(this.bootstrapController, "maxwell-bootstrap-controller");
 
-		addTask(this.bootstrapController);
 		return this.bootstrapController;
+	}
+
+	public void startSchemaCompactor() throws SQLException {
+		if ( this.config.maxSchemaDeltas == null )
+			return;
+
+		MysqlSchemaCompactor compactor = new MysqlSchemaCompactor(
+				this.config.maxSchemaDeltas,
+				this.getMaxwellConnectionPool(),
+				this.config.clientID,
+				this.getServerID(),
+				this.getCaseSensitivity()
+		);
+
+		this.startTask(compactor, "maxwell-schema-compactor");
 	}
 
 	public Filter getFilter() {
@@ -405,22 +455,6 @@ public class MaxwellContext {
 
 	public boolean getReplayMode() {
 		return this.config.replayMode;
-	}
-
-	private void probePool( ConnectionPool pool, String uri ) throws SQLException {
-		try (Connection c = pool.getConnection()) {
-			c.createStatement().execute("SELECT 1");
-		} catch (SQLException e) {
-			LOGGER.error("Could not connect to " + uri + ": " + e.getLocalizedMessage());
-			throw (e);
-		}
-	}
-
-	public void probeConnections() throws SQLException, URISyntaxException {
-		probePool(this.rawMaxwellConnectionPool, this.config.maxwellMysql.getConnectionURI(false));
-
-		if ( this.maxwellConnectionPool != this.replicationConnectionPool )
-			probePool(this.replicationConnectionPool, this.config.replicationMysql.getConnectionURI());
 	}
 
 	public void setReplicator(Replicator replicator) {

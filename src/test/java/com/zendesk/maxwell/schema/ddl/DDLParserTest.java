@@ -103,6 +103,18 @@ public class DDLParserTest {
 	}
 
 	@Test
+	public void testSRID() {
+		TableAlter a = parseAlter("alter table foo add column `location` point NOT NULL SRID 4326");
+
+		AddColumnMod m = (AddColumnMod) a.columnMods.get(0);
+		assertThat(m.name, is("location"));
+
+		GeometryColumnDef b = (GeometryColumnDef) m.definition;
+		assertThat(b.getType(), is("point"));;
+		assertThat(b.getName(), is("location"));
+	}
+
+	@Test
 	public void testText() {
 		TableAlter a = parseAlter("alter table no.no add column mocha TEXT character set 'utf8' collate 'utf8_foo'");
 
@@ -167,6 +179,7 @@ public class DDLParserTest {
 	@Test
 	public void testParsingSomeAlters() {
 		String testSQL[] = {
+			"CREATE TABLE employees (   data JSON,   INDEX ((CAST(data->>'$.name' AS CHAR(30)))) )",
 			"ALTER TABLE uat_sync_test.p add COLUMN uat_sync_test.p.remark VARCHAR(100) after pname",
 			"alter table t add column c varchar(255) default 'string1' 'string2'",
 			"alter table t add column mortgage_item BIT(4) NOT NULL DEFAULT 0b0000",
@@ -233,13 +246,21 @@ public class DDLParserTest {
 			"create table vc11( id serial, name varchar(10) not null default \"\")",
 			"create table foo.order ( i int )",
 			"alter table foo.int add column bar varchar(255)",
-			"alter table something collate = default"
-
+			"alter table something collate = default",
+			"ALTER TABLE t DROP t.foo",
+			"alter table f add column i varchar(255) default ('environment,namespace,table_name')",
+			"CREATE DATABASE xyz DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT ENCRYPTION='N'",
+			"CREATE TABLE testTable18 ( command JSON NOT NULL DEFAULT (JSON_QUOTE(\"{'parent':'sched'}\")) )",
+			"CREATE TABLE testTable19 ( pid BIGINT NOT NULL DEFAULT(1) )"
 		};
 
 		for ( String s : testSQL ) {
-			SchemaChange parsed = parse(s).get(0);
-			assertThat("Expected " + s + "to parse", parsed, not(nullValue()));
+			try {
+				SchemaChange parsed = parse(s).get(0);
+				assertThat("Expected " + s + "to parse", parsed, not(nullValue()));
+			} catch ( MaxwellSQLSyntaxError e ) {
+				assertThat("Expected " + s + "to parse, but got: " + e.getMessage(), true, is(false));
+			}
 		}
 
 	}
@@ -265,7 +286,8 @@ public class DDLParserTest {
 			"CREATE ROLE 'administrator', 'developer'",
 			"SET ROLE 'role1', 'role2'",
 			"SET DEFAULT ROLE administrator, developer TO 'joe'@'10.0.0.1'",
-			"DROP ROLE 'role1'"
+			"DROP ROLE 'role1'",
+			"#comment\ndrop procedure if exists `foo`"
 		};
 
 		for ( String s : testSQL ) {
